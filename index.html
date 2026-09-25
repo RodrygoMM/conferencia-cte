@@ -702,6 +702,7 @@
       var galleryList = $("galleryList");
       var save = $("save"), cancel = $("cancel"), toastEl = $("toast");
       var photoInput = $("photoInput"), pendingPhotos = [], photoTargetId = null;
+      var clearBtn = $("clear");
       var cte = $("cte"), volume = $("volume"), peso = $("peso"), comp = $("comp"), largura = $("largura"),
         altura = $("altura"), m3 = $("m3"), cotacao = $("cotacao"), valorCte = $("valorCte"), diferenca = $("diferenca");
 
@@ -1331,22 +1332,24 @@
         });
       }, false);
 
-      $("clear").addEventListener("click", function () {
-        if (!items.length) {
-          toast("Não há registros.");
-          return;
-        }
+      if (clearBtn) {
+        clearBtn.addEventListener("click", function () {
+          if (!items.length) {
+            toast("Não há registros.");
+            return;
+          }
 
-        if (confirm("Apagar todos os CTEs e fotos deste dia?")) {
-          items = [];
-          store();
-          clearPhotoDB().catch(function () { });
-          render();
-          renderGallery();
-          reset();
-          toast("Registros e fotos apagados.");
-        }
-      }, false);
+          if (confirm("Apagar todos os CTEs e fotos deste dia?")) {
+            items = [];
+            store();
+            clearPhotoDB().catch(function () { });
+            render();
+            renderGallery();
+            reset();
+            toast("Registros e fotos apagados.");
+          }
+        }, false);
+      }
 
       if (sessionStorage.getItem("cte_auth") === "1") {
         initializeData().then(function () {
@@ -1361,4 +1364,3 @@
 </body>
 
 </html>
-
