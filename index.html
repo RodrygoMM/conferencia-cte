@@ -674,8 +674,16 @@
       var ACCESS_PIN = "7319";
 
       var KEY = "conferencia_cte_pin_v1";
+      var DATE_KEY = KEY + "_data_trabalho";
+      var DB_NAME = "conferencia_cte_fotos_v2";
+      var DB_VERSION = 1;
+      var PHOTO_STORE = "photos";
+
       var items = [];
       var editing = null;
+      var currentWorkDate = "";
+      var photoDB = null;
+      var galleryUrls = [];
 
       function $(id) { return document.getElementById(id); }
 
@@ -687,13 +695,20 @@
       var cte = $("cte"), volume = $("volume"), peso = $("peso"), comp = $("comp"), largura = $("largura"),
         altura = $("altura"), m3 = $("m3"), cotacao = $("cotacao"), valorCte = $("valorCte"), diferenca = $("diferenca");
 
+      function todayKey() {
+        var d = new Date(), p = function (n) { return n < 10 ? "0" + n : String(n); };
+        return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate());
+      }
+
       function liberar() {
         if (pinInput.value === ACCESS_PIN) {
           sessionStorage.setItem("cte_auth", "1");
           pinScreen.classList.add("hidden");
           app.classList.remove("hidden");
           pinError.textContent = "";
-          load(); render(); renderGallery(); calc();
+          initializeData().then(function () {
+            render(); renderGallery(); calc();
+          });
         } else {
           pinError.textContent = "PIN incorreto";
           pinInput.value = "";
@@ -750,16 +765,13 @@
         try { cte.setSelectionRange(start + 1, start + 1); } catch (e) { }
       }, false);
 
-      function photoLabel(index) {
-        return (cte.value.trim() || "CTE") + "_" + String.fromCharCode(65 + index);
-      }
-
       function minifyPhoto(file, done) {
         var reader = new FileReader();
         reader.onload = function (ev) {
           var image = new Image();
           image.onload = function () {
-            var max = 1280, scale = Math.min(1, max / Math.max(image.naturalWidth, image.naturalHeight));
+            var max = 1280;
+            var scale = Math.min(1, max / Math.max(image.naturalWidth, image.naturalHeight));
             var canvas = document.createElement("canvas");
             canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
             canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
@@ -772,26 +784,127 @@
         reader.readAsDataURL(file);
       }
 
+      function dataUrlToBlob(dataUrl) {
+        var parts = dataUrl.split(",");
+        var mime = (parts[0].match(/data:([^;]+)/) || [null, "image/jpeg"])[1];
+        var binary = atob(parts[1]);
+        var bytes = new Uint8Array(binary.length);
+        for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        return new Blob([bytes], { type: mime });
+      }
+
+      function openPhotoDB() {
+        return new Promise(function (resolve, reject) {
+          if (!window.indexedDB) {
+            reject(new Error("IndexedDB não disponível"));
+            return;
+          }
+          var req = indexedDB.open(DB_NAME, DB_VERSION);
+          req.onupgradeneeded = function () {
+            var db = req.result;
+            if (!db.objectStoreNames.contains(PHOTO_STORE)) {
+              db.createObjectStore(PHOTO_STORE, { keyPath: "id" });
+            }
+          };
+          req.onsuccess = function () {
+            photoDB = req.result;
+            resolve(photoDB);
+          };
+          req.onerror = function () { reject(req.error || new Error("Falha ao abrir IndexedDB")); };
+        });
+      }
+
+      function idbTransaction(mode, callback) {
+        return new Promise(function (resolve, reject) {
+          if (!photoDB) { reject(new Error("Banco de fotos não aberto")); return; }
+          var tx = photoDB.transaction(PHOTO_STORE, mode);
+          var store = tx.objectStore(PHOTO_STORE);
+          var result;
+          try { result = callback(store); } catch (e) { reject(e); return; }
+          tx.oncomplete = function () { resolve(result); };
+          tx.onerror = function () { reject(tx.error || new Error("Erro no IndexedDB")); };
+          tx.onabort = function () { reject(tx.error || new Error("Operação cancelada")); };
+        });
+      }
+
+      function savePhotoRecord(record) {
+        return idbTransaction("readwrite", function (store) { store.put(record); });
+      }
+
+      function getPhotoRecord(id) {
+        return new Promise(function (resolve, reject) {
+          if (!photoDB) { reject(new Error("Banco de fotos não aberto")); return; }
+          var tx = photoDB.transaction(PHOTO_STORE, "readonly");
+          var req = tx.objectStore(PHOTO_STORE).get(id);
+          req.onsuccess = function () { resolve(req.result || null); };
+          req.onerror = function () { reject(req.error || new Error("Erro ao ler foto")); };
+        });
+      }
+
+      function deletePhotoRecord(id) {
+        if (!id) return Promise.resolve();
+        return idbTransaction("readwrite", function (store) { store.delete(id); });
+      }
+
+      function clearPhotoDB() {
+        return idbTransaction("readwrite", function (store) { store.clear(); });
+      }
+
+      function photoId(cteId, index) {
+        return "photo_" + currentWorkDate + "_" + cteId + "_" + Date.now() + "_" + index + "_" + Math.floor(Math.random() * 100000);
+      }
+
       photoInput.addEventListener("change", function () {
-        var files = Array.prototype.slice.call(photoInput.files || []), i, target;
+        var files = Array.prototype.slice.call(photoInput.files || []);
+        var target = null, i;
+
         for (i = 0; i < items.length; i++) {
           if (items[i].id === photoTargetId) { target = items[i]; break; }
         }
-        if (!target) { photoInput.value = ""; photoTargetId = null; return; }
-        target.photos = target.photos || [];
-        for (i = 0; i < files.length; i++) {
-          if (target.photos.length >= 26) { toast("Limite de 26 fotos por CTE."); break; }
-          if (files[i].type.indexOf("image/") !== 0) continue;
-          minifyPhoto(files[i], function (photo) {
-            target.photos.push(photo); store(); render(); renderGallery();
-          });
+
+        if (!target) {
+          photoInput.value = "";
+          photoTargetId = null;
+          return;
         }
+
+        target.photos = target.photos || [];
+
+        var accepted = 0;
+        files.forEach(function (file) {
+          if (target.photos.length + accepted >= 26) {
+            toast("Limite de 26 fotos por CTE.");
+            return;
+          }
+          if (file.type.indexOf("image/") !== 0) return;
+
+          accepted++;
+          minifyPhoto(file, function (photo) {
+            var id = photoId(target.id, target.photos.length);
+            savePhotoRecord({
+              id: id,
+              date: currentWorkDate,
+              cteId: target.id,
+              name: photo.name,
+              blob: dataUrlToBlob(photo.data)
+            }).then(function () {
+              target.photos.push({ id: id, name: photo.name });
+              store();
+              render();
+              renderGallery();
+            }).catch(function () {
+              toast("Não foi possível salvar uma das fotos.");
+            });
+          });
+        });
+
         photoInput.value = "";
         photoTargetId = null;
       }, false);
 
       function toast(msg) {
-        toastEl.textContent = msg; toastEl.className = "toast show";
+        toastEl.textContent = msg;
+        toastEl.className = "toast show";
         clearTimeout(toast.t);
         toast.t = setTimeout(function () { toastEl.className = "toast"; }, 1800);
       }
@@ -804,23 +917,101 @@
           t.className = "tab" + (t.id === name ? " active" : "");
         });
         window.scrollTo(0, 0);
+        if (name === "galeria") renderGallery();
       }
 
       Array.prototype.forEach.call(document.querySelectorAll(".tab-btn"), function (b) {
         b.addEventListener("click", function () { tab(this.getAttribute("data-tab")); }, false);
       });
 
-      function load() {
+      function loadLocalItems() {
         try {
           var s = localStorage.getItem(KEY);
           items = s ? JSON.parse(s) : [];
           if (Object.prototype.toString.call(items) !== "[object Array]") items = [];
-        } catch (e) { items = []; }
+        } catch (e) {
+          items = [];
+        }
       }
 
       function store() {
-        try { localStorage.setItem(KEY, JSON.stringify(items)); }
-        catch (e) { toast("Não foi possível gravar no navegador."); }
+        try {
+          localStorage.setItem(KEY, JSON.stringify(items));
+          localStorage.setItem(DATE_KEY, currentWorkDate);
+        } catch (e) {
+          toast("Não foi possível gravar os dados no navegador.");
+        }
+      }
+
+      function migrateOldPhotos() {
+        var jobs = [];
+        items.forEach(function (r) {
+          if (!r.photos) return;
+          var oldPhotos = r.photos.slice();
+          r.photos = [];
+
+          oldPhotos.forEach(function (photo, index) {
+            if (photo && photo.data) {
+              var id = photoId(r.id, index);
+              try {
+                jobs.push(savePhotoRecord({
+                  id: id,
+                  date: currentWorkDate,
+                  cteId: r.id,
+                  name: photo.name || ("Foto_" + (index + 1) + ".jpg"),
+                  blob: dataUrlToBlob(photo.data)
+                }).then(function () {
+                  r.photos.push({ id: id, name: photo.name || ("Foto_" + (index + 1) + ".jpg") });
+                }));
+              } catch (e) {}
+            } else if (photo && photo.id) {
+              r.photos.push({ id: photo.id, name: photo.name || "" });
+            }
+          });
+        });
+
+        return Promise.all(jobs).then(function () {
+          store();
+        });
+      }
+
+      function initializeData() {
+        currentWorkDate = todayKey();
+
+        return openPhotoDB().then(function () {
+          var savedDate = localStorage.getItem(DATE_KEY);
+
+          if (savedDate && savedDate !== currentWorkDate) {
+            items = [];
+            localStorage.removeItem(KEY);
+            return clearPhotoDB().then(function () {
+              localStorage.setItem(DATE_KEY, currentWorkDate);
+              toast("Novo dia: histórico anterior foi apagado.");
+            });
+          }
+
+          loadLocalItems();
+
+          if (!savedDate) {
+            return migrateOldPhotos();
+          }
+
+          localStorage.setItem(DATE_KEY, currentWorkDate);
+        }).catch(function () {
+          loadLocalItems();
+
+          var savedDate = localStorage.getItem(DATE_KEY);
+          if (savedDate && savedDate !== currentWorkDate) {
+            items = [];
+            localStorage.removeItem(KEY);
+            localStorage.setItem(DATE_KEY, currentWorkDate);
+            toast("Novo dia: histórico anterior foi apagado.");
+          } else if (!savedDate) {
+            localStorage.setItem(DATE_KEY, currentWorkDate);
+          }
+
+          toast("Armazenamento de fotos indisponível neste navegador.");
+        });
       }
 
       function esc(s) {
@@ -835,6 +1026,7 @@
           list.innerHTML = '<div class="empty">Nenhum CTE salvo ainda.</div>';
           return;
         }
+
         var h = "", i, r;
         for (i = 0; i < items.length; i++) {
           r = items[i];
@@ -855,38 +1047,67 @@
         list.innerHTML = h;
       }
 
+      function revokeGalleryUrls() {
+        galleryUrls.forEach(function (url) { try { URL.revokeObjectURL(url); } catch (e) {} });
+        galleryUrls = [];
+      }
+
       function renderGallery() {
-        var h = "", i, j, r, p, label;
+        revokeGalleryUrls();
+
+        var h = "", jobs = [], i, j, r, p, label;
+
         for (i = 0; i < items.length; i++) {
           r = items[i];
           for (j = 0; r.photos && j < r.photos.length; j++) {
             p = r.photos[j];
             label = String(r.cte || "CTE") + "_" + String.fromCharCode(65 + j);
-            h += '<div class="gallery-item">' +
-              '<img src="' + esc(p.data) + '" alt="' + esc(label) + '">' +
-              '<div class="gallery-caption"><span>' + esc(label) + '</span>' +
-              '<button type="button" class="gallery-delete" data-gallery-id="' + esc(r.id) + '" data-gallery-index="' + j + '">Excluir</button></div>' +
-              '</div>';
+
+            jobs.push((function (r, p, label, index) {
+              return getPhotoRecord(p.id).then(function (record) {
+                if (!record || !record.blob) return;
+                var url = URL.createObjectURL(record.blob);
+                galleryUrls.push(url);
+                h += '<div class="gallery-item">' +
+                  '<img src="' + esc(url) + '" alt="' + esc(label) + '">' +
+                  '<div class="gallery-caption"><span>' + esc(label) + '</span>' +
+                  '<button type="button" class="gallery-delete" data-gallery-id="' + esc(r.id) + '" data-gallery-photo="' + esc(p.id) + '">Excluir</button></div>' +
+                  '</div>';
+              }).catch(function () {});
+            })(r, p, label, j));
           }
         }
-        galleryList.innerHTML = h || '<div class="empty">Nenhuma foto salva ainda.</div>';
+
+        Promise.all(jobs).then(function () {
+          galleryList.innerHTML = h || '<div class="empty">Nenhuma foto salva ainda.</div>';
+        });
       }
 
       function reset() {
         cte.value = ""; volume.value = ""; peso.value = ""; comp.value = ""; largura.value = "";
         altura.value = ""; m3.value = ""; cotacao.value = ""; valorCte.value = ""; diferenca.value = "";
         pendingPhotos = [];
-        editing = null; panel.className = "panel"; title.textContent = "Novo CTE";
-        save.textContent = "Salvar CTE"; cancel.hidden = true;
+        editing = null;
+        panel.className = "panel";
+        title.textContent = "Novo CTE";
+        save.textContent = "Salvar CTE";
+        cancel.hidden = true;
       }
 
       function data() {
         return {
           id: editing || (String(Date.now()) + "_" + String(Math.floor(Math.random() * 100000))),
-          cte: cte.value.trim(), volume: volume.value.trim(), peso: peso.value.trim(),
-          comp: comp.value.trim(), largura: largura.value.trim(), altura: altura.value.trim(),
-          m3: m3.value.trim(), cotacao: cotacao.value.trim(), valorCte: valorCte.value.trim(),
-          diferenca: diferenca.value.trim(), photos: pendingPhotos.slice()
+          cte: cte.value.trim(),
+          volume: volume.value.trim(),
+          peso: peso.value.trim(),
+          comp: comp.value.trim(),
+          largura: largura.value.trim(),
+          altura: altura.value.trim(),
+          m3: m3.value.trim(),
+          cotacao: cotacao.value.trim(),
+          valorCte: valorCte.value.trim(),
+          diferenca: diferenca.value.trim(),
+          photos: pendingPhotos.slice()
         };
       }
 
@@ -896,34 +1117,56 @@
         if (!/[/-]/.test(cte.value)) { toast("Use / ou - no número do CTE."); cte.focus(); return; }
 
         var d = data(), i, found = false;
+
         if (editing) {
           for (i = 0; i < items.length; i++) {
             if (items[i].id === editing) { items[i] = d; found = true; break; }
           }
         }
+
         if (!found) items.unshift(d);
 
-        store(); render(); renderGallery(); reset(); tab("resultados"); toast("CTE salvo.");
+        store();
+        render();
+        renderGallery();
+        reset();
+        tab("resultados");
+        toast("CTE salvo.");
       }, false);
 
-      cancel.addEventListener("click", function () { reset(); toast("Edição cancelada."); }, false);
+      cancel.addEventListener("click", function () {
+        reset();
+        toast("Edição cancelada.");
+      }, false);
 
       galleryList.addEventListener("click", function (ev) {
-        var button = ev.target, id, index, i;
+        var button = ev.target, id, photoIdToDelete, i, j;
+
         if (!button.getAttribute || button.getAttribute("data-gallery-id") === null) return;
+
         id = button.getAttribute("data-gallery-id");
-        index = parseInt(button.getAttribute("data-gallery-index"), 10);
+        photoIdToDelete = button.getAttribute("data-gallery-photo");
+
         for (i = 0; i < items.length; i++) {
           if (items[i].id === id && items[i].photos) {
-            items[i].photos.splice(index, 1);
-            store(); render(); renderGallery(); toast("Foto excluída.");
-            return;
+            for (j = 0; j < items[i].photos.length; j++) {
+              if (items[i].photos[j].id === photoIdToDelete) {
+                items[i].photos.splice(j, 1);
+                deletePhotoRecord(photoIdToDelete).catch(function () {});
+                store();
+                render();
+                renderGallery();
+                toast("Foto excluída.");
+                return;
+              }
+            }
           }
         }
       }, false);
 
       list.addEventListener("click", function (ev) {
         var n = ev.target;
+
         while (n && n !== list) {
           if (n.getAttribute && n.getAttribute("data-photo-add")) {
             photoTargetId = n.getAttribute("data-photo-add");
@@ -931,73 +1174,161 @@
             ev.stopPropagation();
             return;
           }
+
           if (n.getAttribute && n.getAttribute("data-del")) {
-            var id = n.getAttribute("data-del"), next = [], i;
+            var id = n.getAttribute("data-del"), next = [], i, r;
             ev.stopPropagation();
-            for (i = 0; i < items.length; i++)if (items[i].id !== id) next.push(items[i]);
-            items = next; store(); render(); renderGallery(); toast("CTE excluído."); return;
+
+            for (i = 0; i < items.length; i++) {
+              if (items[i].id === id) r = items[i];
+              else next.push(items[i]);
+            }
+
+            if (r && r.photos) {
+              r.photos.forEach(function (p) { deletePhotoRecord(p.id).catch(function () {}); });
+            }
+
+            items = next;
+            store();
+            render();
+            renderGallery();
+            toast("CTE excluído.");
+            return;
           }
+
           if (n.className && String(n.className).indexOf("card") !== -1 && n.getAttribute("data-id")) {
             var rid = n.getAttribute("data-id"), r = null, j;
-            for (j = 0; j < items.length; j++)if (items[j].id === rid) { r = items[j]; break; }
+
+            for (j = 0; j < items.length; j++) {
+              if (items[j].id === rid) { r = items[j]; break; }
+            }
+
             if (!r) return;
-            editing = r.id; cte.value = r.cte || ""; volume.value = r.volume || ""; peso.value = r.peso || "";
-            comp.value = r.comp || ""; largura.value = r.largura || ""; altura.value = r.altura || "";
-            m3.value = r.m3 || ""; cotacao.value = r.cotacao || ""; valorCte.value = r.valorCte || "";
+
+            editing = r.id;
+            cte.value = r.cte || "";
+            volume.value = r.volume || "";
+            peso.value = r.peso || "";
+            comp.value = r.comp || "";
+            largura.value = r.largura || "";
+            altura.value = r.altura || "";
+            m3.value = r.m3 || "";
+            cotacao.value = r.cotacao || "";
+            valorCte.value = r.valorCte || "";
             diferenca.value = r.diferenca || "";
             pendingPhotos = (r.photos || []).slice();
-            panel.className = "panel editing"; title.textContent = "Editar " + r.cte;
-            save.textContent = "Salvar alterações"; cancel.hidden = false; tab("entrada"); return;
+
+            panel.className = "panel editing";
+            title.textContent = "Editar " + r.cte;
+            save.textContent = "Salvar alterações";
+            cancel.hidden = false;
+            tab("entrada");
+            return;
           }
+
           n = n.parentNode;
         }
       }, false);
 
-      function csvCell(v) { return '"' + String(v == null ? "" : v).replace(/"/g, '""') + '"'; }
+      function csvCell(v) {
+        return '"' + String(v == null ? "" : v).replace(/"/g, '""') + '"';
+      }
 
       function downloadPhotos() {
-        var i, j, r, photo, link, baseName;
-        for (i = 0; i < items.length; i++) {
-          r = items[i];
-          baseName = String(r.cte || "CTE").replace(/[^a-z0-9_-]+/gi, "_");
-          for (j = 0; r.photos && j < r.photos.length; j++) {
-            photo = r.photos[j];
-            link = document.createElement("a");
-            link.href = photo.data;
-            link.download = baseName + "_" + String.fromCharCode(65 + j) + ".jpg";
-            document.body.appendChild(link); link.click(); document.body.removeChild(link);
-          }
-        }
+        var jobs = [];
+
+        items.forEach(function (r) {
+          var baseName = String(r.cte || "CTE").replace(/[^a-z0-9_-]+/gi, "_");
+
+          (r.photos || []).forEach(function (photo, j) {
+            jobs.push(getPhotoRecord(photo.id).then(function (record) {
+              if (!record || !record.blob) return;
+
+              var url = URL.createObjectURL(record.blob);
+              var link = document.createElement("a");
+
+              link.href = url;
+              link.download = baseName + "_" + String.fromCharCode(65 + j) + ".jpg";
+              document.body.appendChild(link);
+              link.click();
+              document.body.removeChild(link);
+
+              setTimeout(function () {
+                try { URL.revokeObjectURL(url); } catch (e) {}
+              }, 3000);
+            }).catch(function () {}));
+          });
+        });
+
+        return Promise.all(jobs);
       }
 
       $("download").addEventListener("click", function () {
-        if (!items.length) { toast("Não há CTEs para exportar."); return; }
+        if (!items.length) {
+          toast("Não há CTEs para exportar.");
+          return;
+        }
+
         var rows = [["CTE", "VOLUME", "COMP.", "LARGURA", "ALTURA", "VALOR COTAÇÃO", "VALOR DO CTE", "DIFERENÇA", "M³", "PESO"]];
+
         items.forEach(function (r) {
-          var row = [r.cte, r.volume, r.comp, r.largura, r.altura, r.cotacao, r.valorCte, r.diferenca, r.m3, r.peso];
-          rows.push(row);
+          rows.push([r.cte, r.volume, r.comp, r.largura, r.altura, r.cotacao, r.valorCte, r.diferenca, r.m3, r.peso]);
         });
-        var csv = "\uFEFF" + rows.map(function (row) { return row.map(csvCell).join(";"); }).join("\r\n");
+
+        var csv = "\uFEFF" + rows.map(function (row) {
+          return row.map(csvCell).join(";");
+        }).join("\r\n");
+
         var blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-        var url = URL.createObjectURL(blob), a = document.createElement("a"), d = new Date();
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement("a");
+        var d = new Date();
+
         function p(n) { return n < 10 ? "0" + n : n; }
-        a.href = url; a.download = "conferencia_cte_" + d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + ".csv";
-        document.body.appendChild(a); a.click(); document.body.removeChild(a);
-        setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
-        downloadPhotos();
-        toast("CSV gerado.");
+
+        a.href = url;
+        a.download = "conferencia_cte_" + d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + ".csv";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+
+        setTimeout(function () {
+          URL.revokeObjectURL(url);
+        }, 1000);
+
+        downloadPhotos().then(function () {
+          toast("CSV e fotos preparados para download.");
+        });
       }, false);
 
       $("clear").addEventListener("click", function () {
-        if (!items.length) { toast("Não há registros."); return; }
-        if (confirm("Apagar todos os CTEs?")) { items = []; store(); render(); renderGallery(); reset(); toast("Registros apagados."); }
+        if (!items.length) {
+          toast("Não há registros.");
+          return;
+        }
+
+        if (confirm("Apagar todos os CTEs e fotos deste dia?")) {
+          items = [];
+          store();
+          clearPhotoDB().catch(function () {});
+          render();
+          renderGallery();
+          reset();
+          toast("Registros e fotos apagados.");
+        }
       }, false);
 
       if (sessionStorage.getItem("cte_auth") === "1") {
-        load(); render(); renderGallery(); calc();
+        initializeData().then(function () {
+          render();
+          renderGallery();
+          calc();
+        });
       }
     })();
   </script>
+
 </body>
 
 </html>
+
