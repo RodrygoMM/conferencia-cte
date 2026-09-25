@@ -579,7 +579,7 @@
             <div class="field full">
               <label>CTE</label>
               <div class="cte-wrap">
-                <input id="cte" type="text" inputmode="numeric" pattern="[0-9/]*" placeholder="235/167841">
+                <input id="cte" type="text" inputmode="text" pattern="[0-9A-Za-z/-]*" placeholder="4/333A">
                 <button type="button" id="slashBtn" class="slash-btn">/</button>
               </div>
             </div>
@@ -893,7 +893,7 @@
       save.addEventListener("click", function () {
         calc();
         if (!cte.value.trim()) { toast("Informe o CTE."); cte.focus(); return; }
-        if (cte.value.indexOf("/") === -1) { toast("Use / no número do CTE."); cte.focus(); return; }
+        if (!/[/-]/.test(cte.value)) { toast("Use / ou - no número do CTE."); cte.focus(); return; }
 
         var d = data(), i, found = false;
         if (editing) {
