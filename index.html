@@ -348,6 +348,13 @@
       gap: 8px
     }
 
+    .cte-info {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      min-width: 0
+    }
+
     .card-buttons {
       display: flex;
       gap: 8px
@@ -374,9 +381,8 @@
     }
 
     .photo-count {
-      margin-top: 10px;
       font-size: 12px;
-      color: var(--muted);
+      color: var(--red);
       font-weight: 700
     }
 
@@ -833,7 +839,8 @@
         for (i = 0; i < items.length; i++) {
           r = items[i];
           h += '<div class="card" data-id="' + esc(r.id) + '">' +
-            '<div class="card-top"><div class="cte-number">' + esc(r.cte) + '</div>' +
+            '<div class="card-top"><div class="cte-info"><div class="cte-number">' + esc(r.cte) + '</div>' +
+            (r.photos && r.photos.length ? '<span class="photo-count">' + r.photos.length + " " + (r.photos.length === 1 ? "imagem" : "imagens") + '</span>' : "") + '</div>' +
             '<div class="card-buttons"><button type="button" class="photo-btn danger" data-photo-add="' + esc(r.id) + '">&#128247; Fotos</button>' +
             '<button type="button" class="danger" data-del="' + esc(r.id) + '">Excluir</button></div></div>' +
             '<div class="details">' +
@@ -843,7 +850,7 @@
             '<div>Diferença: <strong>' + esc(r.diferenca || "-") + '</strong></div>' +
             '<div>Cotação: <strong>' + esc(r.cotacao || "-") + '</strong></div>' +
             '<div>Valor CTE: <strong>' + esc(r.valorCte || "-") + '</strong></div>' +
-            '</div>' + (r.photos && r.photos.length ? '<div class="photo-count">' + r.photos.length + " " + (r.photos.length === 1 ? "imagem" : "imagens") + '</div>' : "") + '</div>';
+            '</div></div>';
         }
         list.innerHTML = h;
       }
@@ -948,11 +955,27 @@
 
       function csvCell(v) { return '"' + String(v == null ? "" : v).replace(/"/g, '""') + '"'; }
 
+      function downloadPhotos() {
+        var i, j, r, photo, link, baseName;
+        for (i = 0; i < items.length; i++) {
+          r = items[i];
+          baseName = String(r.cte || "CTE").replace(/[^a-z0-9_-]+/gi, "_");
+          for (j = 0; r.photos && j < r.photos.length; j++) {
+            photo = r.photos[j];
+            link = document.createElement("a");
+            link.href = photo.data;
+            link.download = baseName + "_" + String.fromCharCode(65 + j) + ".jpg";
+            document.body.appendChild(link); link.click(); document.body.removeChild(link);
+          }
+        }
+      }
+
       $("download").addEventListener("click", function () {
         if (!items.length) { toast("Não há CTEs para exportar."); return; }
         var rows = [["CTE", "VOLUME", "COMP.", "LARGURA", "ALTURA", "VALOR COTAÇÃO", "VALOR DO CTE", "DIFERENÇA", "M³", "PESO"]];
         items.forEach(function (r) {
-          rows.push([r.cte, r.volume, r.comp, r.largura, r.altura, r.cotacao, r.valorCte, r.diferenca, r.m3, r.peso]);
+          var row = [r.cte, r.volume, r.comp, r.largura, r.altura, r.cotacao, r.valorCte, r.diferenca, r.m3, r.peso];
+          rows.push(row);
         });
         var csv = "\uFEFF" + rows.map(function (row) { return row.map(csvCell).join(";"); }).join("\r\n");
         var blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
@@ -961,6 +984,7 @@
         a.href = url; a.download = "conferencia_cte_" + d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + ".csv";
         document.body.appendChild(a); a.click(); document.body.removeChild(a);
         setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+        downloadPhotos();
         toast("CSV gerado.");
       }, false);
 
