@@ -373,6 +373,13 @@
       color: #111827
     }
 
+    .photo-count {
+      margin-top: 10px;
+      font-size: 12px;
+      color: var(--muted);
+      font-weight: 700
+    }
+
     .photo-actions {
       display: none
     }
@@ -836,9 +843,7 @@
             '<div>Diferença: <strong>' + esc(r.diferenca || "-") + '</strong></div>' +
             '<div>Cotação: <strong>' + esc(r.cotacao || "-") + '</strong></div>' +
             '<div>Valor CTE: <strong>' + esc(r.valorCte || "-") + '</strong></div>' +
-            '</div>' + (r.photos && r.photos.length ? '<div class="card-photos">' + r.photos.map(function (p, k) {
-              return '<img src="' + esc(p.data) + '" alt="' + esc(String(r.cte || "CTE") + "_" + String.fromCharCode(65 + k)) + '">';
-            }).join("") + '</div>' : "") + '</div>';
+            '</div>' + (r.photos && r.photos.length ? '<div class="photo-count">' + r.photos.length + " " + (r.photos.length === 1 ? "imagem" : "imagens") + '</div>' : "") + '</div>';
         }
         list.innerHTML = h;
       }
@@ -972,4 +977,3 @@
 </body>
 
 </html>
-
