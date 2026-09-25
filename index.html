@@ -230,6 +230,11 @@
       background: #fff
     }
 
+    input::placeholder {
+      color: rgba(11, 110, 253, 0.38);
+      opacity: 1
+    }
+
     input:focus {
       outline: none;
       border-color: #86b7fe;
@@ -274,7 +279,11 @@
     }
 
     .note {
-      margin-top: 8px;
+      margin-top: 12px;
+      padding: 10px 12px;
+      border: 1px solid #dbe7ff;
+      border-radius: 10px;
+      background: rgba(11, 110, 253, 0.04);
       font-size: 11px;
       color: var(--muted);
       line-height: 1.45
@@ -579,14 +588,14 @@
             <div class="field full">
               <label>CTE</label>
               <div class="cte-wrap">
-                <input id="cte" type="text" inputmode="text" pattern="[0-9A-Za-z/-]*" placeholder="4/333A">
+                <input id="cte" type="text" inputmode="numeric" pattern="[0-9/]*" placeholder="4/4333">
                 <button type="button" id="slashBtn" class="slash-btn">/</button>
               </div>
             </div>
 
             <div class="field">
               <label>VOLUME</label>
-              <input id="volume" type="text" inputmode="decimal" pattern="[0-9.,]*" placeholder="5">
+              <input id="volume" type="text" inputmode="numeric" pattern="[0-9]*" placeholder="5">
             </div>
 
             <div class="field">
@@ -614,7 +623,7 @@
 
             <div class="field">
               <label>M³</label>
-              <input id="m3" type="text" readonly>
+              <input id="m3" type="text" inputmode="decimal" pattern="[0-9.,]*" readonly>
             </div>
 
             <div class="field">
@@ -629,18 +638,20 @@
 
             <div class="field full">
               <label>DIFERENÇA</label>
-              <input id="diferenca" type="text" readonly>
+              <input id="diferenca" type="text" inputmode="decimal" pattern="[0-9.,-]*" readonly>
             </div>
-          </div>
-
-          <div class="note">
-            M³ = Volume × Comp. × Largura × Altura<br>
-            Diferença = Valor Cotação − Valor do CTE
           </div>
 
           <div class="actions">
             <button type="button" id="save" class="primary">Salvar CTE</button>
             <button type="button" id="cancel" class="secondary" hidden>Cancelar edição</button>
+          </div>
+
+          <div class="note">
+            M³ = Volume × Comp. × Largura × Altura<br>
+            Diferença = Valor Cotação − Valor do CTE<br>
+            <strong>Os registros e fotos são armazenados somente na memória do dia.</strong><br>
+            <strong>Quando inicia um novo dia, eles são apagados automaticamente.</strong>
           </div>
         </form>
       </div>
@@ -651,7 +662,6 @@
       <input id="photoInput" class="hidden" type="file" accept="image/*" capture="environment" multiple>
       <div class="result-actions">
         <button type="button" id="download" class="download">Baixar Excel CSV</button>
-        <button type="button" id="clear" class="danger">Limpar todos</button>
       </div>
       <div id="list" class="list"></div>
     </section>
@@ -694,6 +704,26 @@
       var photoInput = $("photoInput"), pendingPhotos = [], photoTargetId = null;
       var cte = $("cte"), volume = $("volume"), peso = $("peso"), comp = $("comp"), largura = $("largura"),
         altura = $("altura"), m3 = $("m3"), cotacao = $("cotacao"), valorCte = $("valorCte"), diferenca = $("diferenca");
+
+      function forceNumericKeyboard() {
+        Array.prototype.forEach.call(document.querySelectorAll("input"), function (input) {
+          if (input.type === "file" || input.type === "hidden") return;
+          if (input.id === "cte") {
+            input.setAttribute("inputmode", "numeric");
+            input.setAttribute("pattern", "[0-9/]*");
+            return;
+          }
+          if (/[A-Za-z]/.test(input.id) || input.id === "photoInput") {
+            return;
+          }
+          var mode = (input.id === "peso" || input.id === "comp" || input.id === "largura" || input.id === "altura" ||
+            input.id === "cotacao" || input.id === "valorCte" || input.id === "m3" || input.id === "diferenca") ? "decimal" : "numeric";
+          input.setAttribute("inputmode", mode);
+          input.setAttribute("pattern", mode === "decimal" ? "[0-9.,]*" : "[0-9]*");
+        });
+      }
+
+      forceNumericKeyboard();
 
       function todayKey() {
         var d = new Date(), p = function (n) { return n < 10 ? "0" + n : String(n); };
@@ -963,7 +993,7 @@
                 }).then(function () {
                   r.photos.push({ id: id, name: photo.name || ("Foto_" + (index + 1) + ".jpg") });
                 }));
-              } catch (e) {}
+              } catch (e) { }
             } else if (photo && photo.id) {
               r.photos.push({ id: photo.id, name: photo.name || "" });
             }
@@ -1048,7 +1078,7 @@
       }
 
       function revokeGalleryUrls() {
-        galleryUrls.forEach(function (url) { try { URL.revokeObjectURL(url); } catch (e) {} });
+        galleryUrls.forEach(function (url) { try { URL.revokeObjectURL(url); } catch (e) { } });
         galleryUrls = [];
       }
 
@@ -1073,7 +1103,7 @@
                   '<div class="gallery-caption"><span>' + esc(label) + '</span>' +
                   '<button type="button" class="gallery-delete" data-gallery-id="' + esc(r.id) + '" data-gallery-photo="' + esc(p.id) + '">Excluir</button></div>' +
                   '</div>';
-              }).catch(function () {});
+              }).catch(function () { });
             })(r, p, label, j));
           }
         }
@@ -1152,7 +1182,7 @@
             for (j = 0; j < items[i].photos.length; j++) {
               if (items[i].photos[j].id === photoIdToDelete) {
                 items[i].photos.splice(j, 1);
-                deletePhotoRecord(photoIdToDelete).catch(function () {});
+                deletePhotoRecord(photoIdToDelete).catch(function () { });
                 store();
                 render();
                 renderGallery();
@@ -1185,7 +1215,7 @@
             }
 
             if (r && r.photos) {
-              r.photos.forEach(function (p) { deletePhotoRecord(p.id).catch(function () {}); });
+              r.photos.forEach(function (p) { deletePhotoRecord(p.id).catch(function () { }); });
             }
 
             items = next;
@@ -1254,9 +1284,9 @@
               document.body.removeChild(link);
 
               setTimeout(function () {
-                try { URL.revokeObjectURL(url); } catch (e) {}
+                try { URL.revokeObjectURL(url); } catch (e) { }
               }, 3000);
-            }).catch(function () {}));
+            }).catch(function () { }));
           });
         });
 
@@ -1310,7 +1340,7 @@
         if (confirm("Apagar todos os CTEs e fotos deste dia?")) {
           items = [];
           store();
-          clearPhotoDB().catch(function () {});
+          clearPhotoDB().catch(function () { });
           render();
           renderGallery();
           reset();
