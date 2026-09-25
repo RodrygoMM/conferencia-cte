@@ -243,20 +243,12 @@
 
     .cte-wrap {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) 52px 46px;
+      grid-template-columns: minmax(0, 1fr) 52px;
       gap: 6px
     }
 
     .slash-btn {
       font-size: 22px;
-      background: #e9edf2;
-      color: #1f2937;
-      border: 1px solid #cfd6de
-    }
-
-    .camera-btn {
-      font-size: 21px;
-      padding: 8px;
       background: #e9edf2;
       color: #1f2937;
       border: 1px solid #cfd6de
@@ -356,6 +348,11 @@
       gap: 8px
     }
 
+    .card-buttons {
+      display: flex;
+      gap: 8px
+    }
+
     .cte-number {
       font-size: 17px;
       font-weight: 800;
@@ -377,15 +374,10 @@
     }
 
     .photo-actions {
-      display: flex;
-      gap: 8px;
-      margin-top: 10px
+      display: none
     }
 
     .photo-btn {
-      flex: 1;
-      background: #e9edf2;
-      color: #1f2937;
       cursor: pointer
     }
 
@@ -576,16 +568,7 @@
               <div class="cte-wrap">
                 <input id="cte" type="text" inputmode="numeric" pattern="[0-9/]*" placeholder="235/167841">
                 <button type="button" id="slashBtn" class="slash-btn">/</button>
-                <button type="button" id="photoBtn" class="camera-btn" title="Abrir câmera"
-                  aria-label="Abrir câmera">&#128247;</button>
               </div>
-            </div>
-
-            <div class="field full">
-              <label>FOTOS DO CTE</label>
-              <input id="photoInput" class="hidden" type="file" accept="image/*" capture="environment" multiple>
-              <div id="photoList" class="photo-list"></div>
-              <div class="note">As fotos serão reduzidas e identificadas como CTE_A, CTE_B, CTE_C...</div>
             </div>
 
             <div class="field">
@@ -652,6 +635,7 @@
 
     <section id="resultados" class="tab">
       <p class="hint">Toque em um CTE para editar.</p>
+      <input id="photoInput" class="hidden" type="file" accept="image/*" capture="environment" multiple>
       <div class="result-actions">
         <button type="button" id="download" class="download">Baixar Excel CSV</button>
         <button type="button" id="clear" class="danger">Limpar todos</button>
@@ -686,7 +670,7 @@
       var app = $("app"), count = $("count"), panel = $("panel"), title = $("title"), list = $("list");
       var galleryList = $("galleryList");
       var save = $("save"), cancel = $("cancel"), toastEl = $("toast");
-      var photoInput = $("photoInput"), photoBtn = $("photoBtn"), photoList = $("photoList"), pendingPhotos = [];
+      var photoInput = $("photoInput"), pendingPhotos = [], photoTargetId = null;
       var cte = $("cte"), volume = $("volume"), peso = $("peso"), comp = $("comp"), largura = $("largura"),
         altura = $("altura"), m3 = $("m3"), cotacao = $("cotacao"), valorCte = $("valorCte"), diferenca = $("diferenca");
 
@@ -775,41 +759,23 @@
         reader.readAsDataURL(file);
       }
 
-      function renderPhotos() {
-        var h = "", i, p;
-        for (i = 0; i < pendingPhotos.length; i++) {
-          p = pendingPhotos[i];
-          h += '<div class="photo-item">' +
-            '<img src="' + esc(p.data) + '" alt="' + esc(photoLabel(i)) + '">' +
-            '<span class="photo-name">' + esc(photoLabel(i)) + '</span>' +
-            '<button type="button" class="photo-remove" data-photo-del="' + i + '" aria-label="Remover ' + esc(photoLabel(i)) + '">x</button>' +
-            '</div>';
-        }
-        photoList.innerHTML = h;
-      }
-
-      photoBtn.addEventListener("click", function () { photoInput.click(); }, false);
       photoInput.addEventListener("change", function () {
-        var files = Array.prototype.slice.call(photoInput.files || []), i;
+        var files = Array.prototype.slice.call(photoInput.files || []), i, target;
+        for (i = 0; i < items.length; i++) {
+          if (items[i].id === photoTargetId) { target = items[i]; break; }
+        }
+        if (!target) { photoInput.value = ""; photoTargetId = null; return; }
+        target.photos = target.photos || [];
         for (i = 0; i < files.length; i++) {
-          if (pendingPhotos.length >= 26) { toast("Limite de 26 fotos por CTE."); break; }
+          if (target.photos.length >= 26) { toast("Limite de 26 fotos por CTE."); break; }
           if (files[i].type.indexOf("image/") !== 0) continue;
           minifyPhoto(files[i], function (photo) {
-            pendingPhotos.push(photo); renderPhotos();
+            target.photos.push(photo); store(); render(); renderGallery();
           });
         }
         photoInput.value = "";
+        photoTargetId = null;
       }, false);
-
-      photoList.addEventListener("click", function (ev) {
-        var button = ev.target;
-        if (button.getAttribute && button.getAttribute("data-photo-del") !== null) {
-          pendingPhotos.splice(parseInt(button.getAttribute("data-photo-del"), 10), 1);
-          renderPhotos();
-        }
-      }, false);
-
-      cte.addEventListener("input", renderPhotos, false);
 
       function toast(msg) {
         toastEl.textContent = msg; toastEl.className = "toast show";
@@ -861,7 +827,8 @@
           r = items[i];
           h += '<div class="card" data-id="' + esc(r.id) + '">' +
             '<div class="card-top"><div class="cte-number">' + esc(r.cte) + '</div>' +
-            '<button type="button" class="danger" data-del="' + esc(r.id) + '">Excluir</button></div>' +
+            '<div class="card-buttons"><button type="button" class="photo-btn danger" data-photo-add="' + esc(r.id) + '">&#128247; Fotos</button>' +
+            '<button type="button" class="danger" data-del="' + esc(r.id) + '">Excluir</button></div></div>' +
             '<div class="details">' +
             '<div>Volumes: <strong>' + esc(r.volume || "-") + '</strong></div>' +
             '<div>Peso: <strong>' + esc(r.peso || "-") + ' kg</strong></div>' +
@@ -896,7 +863,7 @@
       function reset() {
         cte.value = ""; volume.value = ""; peso.value = ""; comp.value = ""; largura.value = "";
         altura.value = ""; m3.value = ""; cotacao.value = ""; valorCte.value = ""; diferenca.value = "";
-        pendingPhotos = []; renderPhotos();
+        pendingPhotos = [];
         editing = null; panel.className = "panel"; title.textContent = "Novo CTE";
         save.textContent = "Salvar CTE"; cancel.hidden = true;
       }
@@ -946,6 +913,12 @@
       list.addEventListener("click", function (ev) {
         var n = ev.target;
         while (n && n !== list) {
+          if (n.getAttribute && n.getAttribute("data-photo-add")) {
+            photoTargetId = n.getAttribute("data-photo-add");
+            photoInput.click();
+            ev.stopPropagation();
+            return;
+          }
           if (n.getAttribute && n.getAttribute("data-del")) {
             var id = n.getAttribute("data-del"), next = [], i;
             ev.stopPropagation();
@@ -960,7 +933,7 @@
             comp.value = r.comp || ""; largura.value = r.largura || ""; altura.value = r.altura || "";
             m3.value = r.m3 || ""; cotacao.value = r.cotacao || ""; valorCte.value = r.valorCte || "";
             diferenca.value = r.diferenca || "";
-            pendingPhotos = (r.photos || []).slice(); renderPhotos();
+            pendingPhotos = (r.photos || []).slice();
             panel.className = "panel editing"; title.textContent = "Editar " + r.cte;
             save.textContent = "Salvar alterações"; cancel.hidden = false; tab("entrada"); return;
           }
@@ -999,3 +972,4 @@
 </body>
 
 </html>
+
